@@ -1,0 +1,115 @@
+# 使用claude构建的完善ignore
+##############################################
+# 操作系统
+##############################################
+
+# macOS
+.DS_Store
+._*
+.AppleDouble
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+.directory
+
+
+##############################################
+# 编辑器 / IDE
+##############################################
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+
+##############################################
+# CMake / CLion 构建输出（重点：本工程主要用这套）
+##############################################
+# CLion 的 CMake 构建目录（如 cmake-build-debug-stm32）
+cmake-build-*/
+# 通用构建目录
+/build/
+/Build/
+# 万一在源码目录里直接跑了 cmake，挡住这些生成文件
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+compile_commands.json
+# 注意：不要忽略 cmake/ 文件夹与 CMakePresets.json，它们需要提交！
+
+
+##############################################
+# ARM GCC 编译产物 / 固件
+##############################################
+*.o
+*.d
+*.a
+*.elf
+*.bin
+*.hex
+*.map
+*.list
+*.lst
+*.su
+*.lss
+*.sym
+# 如果你想随仓库附带一个预编译固件，把对应行（如 *.hex）删掉即可
+
+
+##############################################
+# Keil MDK 编译输出 / 中间文件
+##############################################
+*.crf
+*.axf
+*.htm
+*.lnp
+*.bak
+*.scvd
+*.iex
+*.dep
+*.build_log.htm
+**/Objects/
+**/Listings/
+
+# Keil 用户配置（每人不同）
+*.uvguix.*
+*.uvopt
+*.uvoptx
+
+
+##############################################
+# IAR EWARM（可选，用到再启用）
+##############################################
+# **/Debug/
+# **/Release/
+# *.dep
+# settings/
+
+
+##############################################
+# STM32CubeIDE（可选，用到再启用）
+##############################################
+# .metadata/
+# Debug/
+# Release/
+
+
+##############################################
+# OpenOCD / 调试 / 杂项
+##############################################
+*.log
+
+# —— 以下文件「需要提交」，切勿忽略（仅作提醒，不写规则）——
+#   .ioc / .mxproject / CMakeLists.txt / CMakePresets.json
+#   cmake/ 文件夹（含 gcc-arm-none-eabi.cmake 工具链文件）
+#   *.ld 链接脚本 / startup_*.s 启动文件 / openocd.cfg
+#   Core/ 与 Drivers/ 源码
