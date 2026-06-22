@@ -55,7 +55,7 @@
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
-
+extern TIM_HandleTypeDef htim3;
 /* USER CODE BEGIN EV */
 
 /* USER CODE END EV */
@@ -72,9 +72,9 @@ void NMI_Handler(void)
 
   /* USER CODE END NonMaskableInt_IRQn 0 */
   /* USER CODE BEGIN NonMaskableInt_IRQn 1 */
-    while (1)
-    {
-    }
+   while (1)
+  {
+  }
   /* USER CODE END NonMaskableInt_IRQn 1 */
 }
 
@@ -199,29 +199,25 @@ void SysTick_Handler(void)
 /******************************************************************************/
 
 /**
-  * @brief This function handles EXTI line1 interrupt.
+  * @brief This function handles TIM3 global interrupt.
   */
-void EXTI1_IRQHandler(void)
+void TIM3_IRQHandler(void)
 {
-  /* USER CODE BEGIN EXTI1_IRQn 0 */
+  /* USER CODE BEGIN TIM3_IRQn 0 */
 
-  /* USER CODE END EXTI1_IRQn 0 */
-  HAL_GPIO_EXTI_IRQHandler(Button_Pin);
-  /* USER CODE BEGIN EXTI1_IRQn 1 */
+  /* USER CODE END TIM3_IRQn 0 */
+  HAL_TIM_IRQHandler(&htim3);
+  /* USER CODE BEGIN TIM3_IRQn 1 */
 
-  /* USER CODE END EXTI1_IRQn 1 */
+  /* USER CODE END TIM3_IRQn 1 */
 }
 
 /* USER CODE BEGIN 1 */
-// 注册中断函数
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-    if (GPIO_Pin == Button_Pin)
-    {
-        // 简单的延时消抖并不适用在这里, 因为HAL_Delay 使用了 SysTick , 它抢占不了你的 EXTI 中断,导致 uwTick 一直增加不了, 使得 HAL_Delay 卡死
-        // HAL_Delay(10);
-        HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-    }
+  if (htim == &htim3)
+  {
+    HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+  }
 }
-
 /* USER CODE END 1 */

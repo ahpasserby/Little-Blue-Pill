@@ -55,7 +55,7 @@
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
-
+extern TIM_HandleTypeDef htim3;
 /* USER CODE BEGIN EV */
 
 /* USER CODE END EV */
@@ -72,9 +72,9 @@ void NMI_Handler(void)
 
   /* USER CODE END NonMaskableInt_IRQn 0 */
   /* USER CODE BEGIN NonMaskableInt_IRQn 1 */
-    while (1)
-    {
-    }
+   while (1)
+  {
+  }
   /* USER CODE END NonMaskableInt_IRQn 1 */
 }
 
@@ -212,16 +212,37 @@ void EXTI1_IRQHandler(void)
   /* USER CODE END EXTI1_IRQn 1 */
 }
 
-/* USER CODE BEGIN 1 */
-// 注册中断函数
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+/**
+  * @brief This function handles TIM3 global interrupt.
+  */
+void TIM3_IRQHandler(void)
 {
-    if (GPIO_Pin == Button_Pin)
-    {
-        // 简单的延时消抖并不适用在这里, 因为HAL_Delay 使用了 SysTick , 它抢占不了你的 EXTI 中断,导致 uwTick 一直增加不了, 使得 HAL_Delay 卡死
-        // HAL_Delay(10);
-        HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
-    }
+  /* USER CODE BEGIN TIM3_IRQn 0 */
+
+  /* USER CODE END TIM3_IRQn 0 */
+  HAL_TIM_IRQHandler(&htim3);
+  /* USER CODE BEGIN TIM3_IRQn 1 */
+
+  /* USER CODE END TIM3_IRQn 1 */
 }
 
+/* USER CODE BEGIN 1 */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  if (GPIO_Pin == Button_Pin)
+  {
+    HAL_TIM_Base_Start_IT(&htim3);
+  }
+}
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  if (htim == &htim3)
+  {
+    HAL_TIM_Base_Stop_IT(&htim3); // 把定时器关闭 -- line1
+    if (HAL_GPIO_ReadPin(Button_GPIO_Port, Button_Pin) == GPIO_PIN_RESET) // 检查 10ms 之后按钮是否仍然在按下状态 -- line2
+    {
+      HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+    }
+  }
+}
 /* USER CODE END 1 */
