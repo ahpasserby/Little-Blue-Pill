@@ -18,15 +18,16 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "can.h"
 #include "dma.h"
 #include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <string.h>
 #include "drv_bsp.h"
-#include "drv_uart.h"
+#include "dvc_serialplot.h"
+#include "dvc_motor.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -47,37 +48,88 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-uint8_t tx_buffer[12];
-uint8_t rx_buffer[10];
+Class_Serialplot serialplot;
+Class_Motor_C620 motor;
+
+float Target_Angle, Now_Angle, Target_Omega, Now_Omega;
+
+uint32_t Counter = 0;
+
+static char Variable_Assignment_List[][SERIALPLOT_RX_VARIABLE_ASSIGNMENT_MAX_LENGTH] = {
+  //电机调PID
+  "pa",
+  "ia",
+  "da",
+  "po",
+  "io",
+  "do",
+};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-/**
- * @brief HAL 库 UART 接收 DMA 空闲中断
- * @param Buffer UART编号
- * @param Length 长度
- */
-void Serialplot_Call_Back(uint8_t *Buffer, uint16_t Length)
-{
-  if (rx_buffer[0] == '0')
-  {
-    BSP_LED_1(BSP_LED_Status_DISABLED);
-  }
-  else if (rx_buffer[0] == '1')
-  {
-    BSP_LED_1(BSP_LED_Status_ENABLED);
-  }
-  else if (rx_buffer[0] == '2')
-  {
-    HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
-  }
-}
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void CAN_Motor_Call_Back(Struct_CAN_Rx_Buffer *Rx_Buffer)
+{
+  switch (Rx_Buffer->Header.StdId)
+  {
+    case (0x201):
+    {
+      motor.CAN_RxCpltCallback(Rx_Buffer->Data);
+    }
+      break;
+  }
+}
+
+/**
+ * @brief HAL库UART接收DMA空闲中断
+ *
+ * @param huart UART编号
+ * @param Size 长度
+ */
+void UART_Serialplot_Call_Back(uint8_t *Buffer, uint16_t Length)
+{
+  serialplot.UART_RxCpltCallback(Buffer);
+  switch (serialplot.Get_Variable_Index())
+  {
+    // 电机调PID
+    case(0):
+    {
+      motor.PID_Angle.Set_K_P(serialplot.Get_Variable_Value());
+    }
+      break;
+    case(1):
+    {
+      motor.PID_Angle.Set_K_I(serialplot.Get_Variable_Value());
+    }
+      break;
+    case(2):
+    {
+      motor.PID_Angle.Set_K_D(serialplot.Get_Variable_Value());
+    }
+      break;
+    case(3):
+    {
+      motor.PID_Omega.Set_K_P(serialplot.Get_Variable_Value());
+    }
+      break;
+    case(4):
+    {
+      motor.PID_Omega.Set_K_I(serialplot.Get_Variable_Value());
+    }
+      break;
+    case(5):
+    {
+      motor.PID_Omega.Set_K_D(serialplot.Get_Variable_Value());
+    }
+      break;
+  }
+}
 
 /* USER CODE END 0 */
 
@@ -111,37 +163,58 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
+  MX_CAN1_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  Uart_Init(&huart2, rx_buffer, 10, Serialplot_Call_Back);
+  BSP_Init(BSP_DC24_LU_ON | BSP_DC24_LD_ON | BSP_DC24_RU_ON | BSP_DC24_RD_ON);
+  CAN_Init(&hcan1, CAN_Motor_Call_Back);
+  UART_Init(&huart2, UART_Serialplot_Call_Back, SERIALPLOT_RX_VARIABLE_ASSIGNMENT_MAX_LENGTH);
+
+  serialplot.Init(&huart2, 6, (char **)Variable_Assignment_List);
+
+  motor.PID_Angle.Init(0.0f, 0.0f, 0.0f, 0.0f, 15.0f * PI, 15.0f * PI);
+  motor.PID_Omega.Init(0.0f, 0.0f, 0.0f, 0.0f, 2500.0f, 2500.0f);
+  motor.Init(&hcan1, CAN_Motor_ID_0x201, Control_Method_ANGLE, 1.0f);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    static uint32_t flag;
-    if (flag == 2500)
+    //如果计时到2000s就换一个目标值
+
+    Counter++;
+    if(Counter >= 2000)
     {
-      flag = 0;
+      Counter = 0;
+      if(motor.Get_Target_Angle() == 4.0f * PI)
+      {
+        motor.Set_Target_Angle(0.0f);
+      }
+      else if(motor.Get_Target_Angle() == 0.0f)
+      {
+        motor.Set_Target_Angle(4.0f * PI);
+      }
     }
-    float tmp_data = ((float)flag / 1000.0f) * ((float)flag / 1000.0f);
-    float led_status = !HAL_GPIO_ReadPin(LED1_GPIO_Port, LED1_Pin);
 
-    memcpy(&tx_buffer[0], &tmp_data, 4);
-    memcpy(&tx_buffer[4], &led_status, 4);
+    //串口绘图显示内容
 
-    // 帧尾:00 00 80 7F
-    tx_buffer[8]  = 0x00;
-    tx_buffer[9]  = 0x00;
-    tx_buffer[10] = 0x80;
-    tx_buffer[11] = 0x7F;
+    Target_Angle = motor.Get_Target_Angle();
+    Now_Angle = motor.Get_Now_Angle();
+    Target_Omega = motor.Get_Target_Omega();
+    Now_Omega = motor.Get_Now_Omega();
+    serialplot.Set_Data(4, &Target_Angle, &Now_Angle, &Target_Omega, &Now_Omega);
+    serialplot.TIM_Write_PeriodElapsedCallback();
 
-    UART_Send_Data(&huart2, tx_buffer, 12);
+    //输出数据到电机
+    motor.TIM_PID_PeriodElapsedCallback();
 
-    flag++;
+    //通信设备回调数据
+    TIM_CAN_PeriodElapsedCallback();
+    TIM_UART_PeriodElapsedCallback();
+
+    //延时1ms
     HAL_Delay(0);
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

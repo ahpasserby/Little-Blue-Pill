@@ -18,15 +18,17 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "can.h"
 #include "dma.h"
 #include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <string.h>
+#include "alg_pid.h"
 #include "drv_bsp.h"
-#include "drv_uart.h"
+#include "drv_can.h"
+#include "dvc_serialplot.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -47,37 +49,75 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-uint8_t tx_buffer[12];
-uint8_t rx_buffer[10];
+Class_Serialplot serialplot;
+Class_PID pid_omega;
+
+int16_t Rx_Encoder, Rx_Omega, Rx_Torque, Rx_Temperature;
+float Now_Omega, Target_Omega = 50.0f * PI;
+uint32_t Counter = 0;
+int32_t Output;
+
+static char Variable_Assignment_List[][SERIALPLOT_RX_VARIABLE_ASSIGNMENT_MAX_LENGTH] = {
+  // 电机调 PID
+  "po",
+  "io",
+  "do",
+};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-/**
- * @brief HAL 库 UART 接收 DMA 空闲中断
- * @param Buffer UART编号
- * @param Length 长度
- */
-void Serialplot_Call_Back(uint8_t *Buffer, uint16_t Length)
-{
-  if (rx_buffer[0] == '0')
-  {
-    BSP_LED_1(BSP_LED_Status_DISABLED);
-  }
-  else if (rx_buffer[0] == '1')
-  {
-    BSP_LED_1(BSP_LED_Status_ENABLED);
-  }
-  else if (rx_buffer[0] == '2')
-  {
-    HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
-  }
-}
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void CAN_Motor_Call_Back (Struct_CAN_Rx_Buffer *Rx_Buffer)
+{
+  uint8_t *Rx_Data = Rx_Buffer->Data;
+  switch (Rx_Buffer->Header.StdId)
+  {
+      case (0x201):
+    {
+      Rx_Encoder = (Rx_Data[0] << 8) | Rx_Data[1];
+      Rx_Omega = (Rx_Data[2] << 8) | Rx_Data[3];
+      Rx_Torque = (Rx_Data[4] << 8) | Rx_Data[5];
+      Rx_Temperature = (Rx_Data[6]);
+    }
+      break;
+  }
+}
+
+/**
+ * @brief HAL库UART接收DMA空闲中断
+ *
+ * @param huart UART编号
+ * @param Size 长度
+ */
+void UART_Serialplot_Call_Back(uint8_t *Buffer, uint16_t Length)
+{
+  serialplot.UART_RxCpltCallback(Buffer);
+  switch (serialplot.Get_Variable_Index())
+  {
+    // 电机调PID
+    case(0):
+    {
+      pid_omega.Set_K_P(serialplot.Get_Variable_Value());
+    }
+      break;
+    case(1):
+    {
+      pid_omega.Set_K_I(serialplot.Get_Variable_Value());
+    }
+      break;
+    case(2):
+    {
+      pid_omega.Set_K_D(serialplot.Get_Variable_Value());
+    }
+      break;
+  }
+}
 
 /* USER CODE END 0 */
 
@@ -111,37 +151,57 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
+  MX_CAN1_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  Uart_Init(&huart2, rx_buffer, 10, Serialplot_Call_Back);
+  BSP_Init(BSP_DC24_LD_ON);
+  CAN_Init(&hcan1, CAN_Motor_Call_Back);
+  UART_Init(&huart2, UART_Serialplot_Call_Back, SERIALPLOT_RX_VARIABLE_ASSIGNMENT_MAX_LENGTH);
+  CAN_Filter_Mask_Config(&hcan1, CAN_FILTER(13) | CAN_FIFO_1 | CAN_STDID |CAN_DATA_TYPE, 0x201, 0x7ff);
+  pid_omega.Init(0.0f, 0.0f, 0.0f, 0.0f, 2500.0f, 2500.0f);
+  serialplot.Init(&huart2, 3, (char** )Variable_Assignment_List);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    static uint32_t flag;
-    if (flag == 2500)
+    //如果计时到2000ms就换一个目标值
+
+    Counter++;
+    if(Counter >= 2000)
     {
-      flag = 0;
+      Counter = 0;
+      if(Target_Omega == 50.0f * PI)
+      {
+        Target_Omega = 100.0f * PI;
+      }
+      else if(Target_Omega == 100.0f * PI)
+      {
+        Target_Omega = 50.0f * PI;
+      }
     }
-    float tmp_data = ((float)flag / 1000.0f) * ((float)flag / 1000.0f);
-    float led_status = !HAL_GPIO_ReadPin(LED1_GPIO_Port, LED1_Pin);
 
-    memcpy(&tx_buffer[0], &tmp_data, 4);
-    memcpy(&tx_buffer[4], &led_status, 4);
+    //串口绘图显示内容
 
-    // 帧尾:00 00 80 7F
-    tx_buffer[8]  = 0x00;
-    tx_buffer[9]  = 0x00;
-    tx_buffer[10] = 0x80;
-    tx_buffer[11] = 0x7F;
+    Now_Omega = Rx_Omega * 2.0f * PI / 60.0f;
+    serialplot.Set_Data(2, &Now_Omega, &Target_Omega);
+    //相比第七次培训修改了函数名, 以便适配新的开发库
+    serialplot.TIM_Write_PeriodElapsedCallback();
+    TIM_UART_PeriodElapsedCallback();
 
-    UART_Send_Data(&huart2, tx_buffer, 12);
+    //PID相关计算内容
+    pid_omega.Set_Target(Target_Omega);
+    pid_omega.Set_Now(Now_Omega);
+    pid_omega.TIM_Adjust_PeriodElapsedCallback();
+    Output = pid_omega.Get_Out();
 
-    flag++;
+    //输出数据到电机
+    CAN1_0x200_Tx_Data[0] = Output >> 8;
+    CAN1_0x200_Tx_Data[1] = Output;
+    CAN_Send_Data(&hcan1, 0x200, CAN1_0x200_Tx_Data, 8);
+
     HAL_Delay(0);
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

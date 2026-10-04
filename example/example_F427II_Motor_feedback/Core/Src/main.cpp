@@ -18,15 +18,16 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "can.h"
 #include "dma.h"
 #include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <string.h>
 #include "drv_bsp.h"
-#include "drv_uart.h"
+#include "drv_can.h"
+#include "dvc_serialplot.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -47,38 +48,34 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-uint8_t tx_buffer[12];
-uint8_t rx_buffer[10];
+Class_Serialplot serialplot;
+int16_t Rx_Encoder, Rx_Omega, Rx_Torque, Rx_Temperature;
+float Tx_Encoder, Tx_Omega, Tx_Torque, Tx_Temperature;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-/**
- * @brief HAL 库 UART 接收 DMA 空闲中断
- * @param Buffer UART编号
- * @param Length 长度
- */
-void Serialplot_Call_Back(uint8_t *Buffer, uint16_t Length)
-{
-  if (rx_buffer[0] == '0')
-  {
-    BSP_LED_1(BSP_LED_Status_DISABLED);
-  }
-  else if (rx_buffer[0] == '1')
-  {
-    BSP_LED_1(BSP_LED_Status_ENABLED);
-  }
-  else if (rx_buffer[0] == '2')
-  {
-    HAL_GPIO_TogglePin(LED1_GPIO_Port, LED1_Pin);
-  }
-}
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+void CAN_Motor_Call_Back (Struct_CAN_Rx_Buffer *Rx_Buffer)
+{
+  uint8_t *Rx_Data = Rx_Buffer->Data;
+  switch (Rx_Buffer->Header.StdId)
+  {
+      case (0x201):
+    {
+      Rx_Encoder = (Rx_Data[0] << 8) | Rx_Data[1];
+      Rx_Omega = (Rx_Data[2] << 8) | Rx_Data[3];
+      Rx_Torque = (Rx_Data[4] << 8) | Rx_Data[5];
+      Rx_Temperature = (Rx_Data[6]);
+    }
+      break;
+  }
+}
 /* USER CODE END 0 */
 
 /**
@@ -111,37 +108,30 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
+  MX_CAN1_Init();
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  Uart_Init(&huart2, rx_buffer, 10, Serialplot_Call_Back);
+  BSP_Init(BSP_DC24_LD_ON);
+  CAN_Init(&hcan1, CAN_Motor_Call_Back);
+  Uart_Init(&huart2, NULL, 0, NULL);
+  CAN_Filter_Mask_Config(&hcan1, CAN_FILTER(13) | CAN_FIFO_1 | CAN_STDID |CAN_DATA_TYPE, 0x201, 0x7ff);
+  serialplot.Init(&huart2, 0, NULL);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    static uint32_t flag;
-    if (flag == 2500)
-    {
-      flag = 0;
-    }
-    float tmp_data = ((float)flag / 1000.0f) * ((float)flag / 1000.0f);
-    float led_status = !HAL_GPIO_ReadPin(LED1_GPIO_Port, LED1_Pin);
+    Tx_Encoder = Rx_Encoder;
+    Tx_Omega = Rx_Omega;
+    Tx_Torque = Rx_Torque;
+    Tx_Temperature = Rx_Temperature;
 
-    memcpy(&tx_buffer[0], &tmp_data, 4);
-    memcpy(&tx_buffer[4], &led_status, 4);
+    serialplot.Set_Data(4, &Tx_Encoder, &Tx_Omega, &Tx_Torque, &Tx_Temperature);
+    serialplot.TIM_Add_PeriodElapsedCallback();
+    TIM_UART_PeriodElapsedCallback();
 
-    // 帧尾:00 00 80 7F
-    tx_buffer[8]  = 0x00;
-    tx_buffer[9]  = 0x00;
-    tx_buffer[10] = 0x80;
-    tx_buffer[11] = 0x7F;
-
-    UART_Send_Data(&huart2, tx_buffer, 12);
-
-    flag++;
     HAL_Delay(0);
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */

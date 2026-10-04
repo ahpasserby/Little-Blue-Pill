@@ -24,9 +24,11 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <string.h>
 #include "drv_bsp.h"
 #include "drv_uart.h"
+#include <stdio.h>
+#include <string.h>
+#include "robomaster_points.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -47,8 +49,10 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-uint8_t tx_buffer[12];
+uint8_t tx_buffer[9] = {0xAB};
 uint8_t rx_buffer[10];
+uint8_t tx[RM_CHANNELS * 4 + 4];   // 4通道 × 4字节 + 4字节帧尾 = 20 字节
+static uint32_t idx = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -120,28 +124,26 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    static uint32_t flag;
-    if (flag == 2500)
+    static uint32_t idx = 0;
+    char line[64];
+    while (1)
     {
-      flag = 0;
+      // 取第 idx 个点序号的 4 个通道值
+      for (int c = 0; c < RM_CHANNELS; c++)
+      {
+        float v = rm_points[idx][c];   // -10000 表示抬笔
+        memcpy(&tx[c * 4], &v, 4);
+      }
+      // JustFloat 帧尾 0x00 0x00 0x80 0x7F
+      tx[16] = 0x00; tx[17] = 0x00; tx[18] = 0x80; tx[19] = 0x7F;
+
+      UART_Send_Data(&huart2, tx, RM_CHANNELS * 4 + 4);
+
+      idx++;
+      if (idx >= RM_POINT_NUM) idx = 0;   // 画完循环重画
+
+      HAL_Delay(2);   // 控制绘制速度,2ms/点,画完约 1.2 秒
     }
-    float tmp_data = ((float)flag / 1000.0f) * ((float)flag / 1000.0f);
-    float led_status = !HAL_GPIO_ReadPin(LED1_GPIO_Port, LED1_Pin);
-
-    memcpy(&tx_buffer[0], &tmp_data, 4);
-    memcpy(&tx_buffer[4], &led_status, 4);
-
-    // 帧尾:00 00 80 7F
-    tx_buffer[8]  = 0x00;
-    tx_buffer[9]  = 0x00;
-    tx_buffer[10] = 0x80;
-    tx_buffer[11] = 0x7F;
-
-    UART_Send_Data(&huart2, tx_buffer, 12);
-
-    flag++;
-    HAL_Delay(0);
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -235,3 +237,21 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
+
+/*
+网页配置成:
+// 每帧 = 4个float(16字节) + 4字节帧尾(00 00 80 7F)
+const FRAME = 20;
+if (uint8ArrayData.length < FRAME) {
+return { values: null, frameByteLength: 0 };
+}
+// 找帧尾校验(简单起见:直接按固定20字节切,假设对齐)
+const dv = new DataView(uint8ArrayData.buffer, uint8ArrayData.byteOffset, uint8ArrayData.byteLength);
+const vals = [];
+for (let i = 0; i < 4; i++) {
+let v = dv.getFloat32(i * 4, true);   // 小端
+if (v <= -9999) v = NaN;              // 哨兵值 -10000 → NaN 抬笔
+vals.push(v);
+}
+return { values: vals, frameByteLength: FRAME };
+*/
